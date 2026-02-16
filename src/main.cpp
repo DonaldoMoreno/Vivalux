@@ -219,6 +219,8 @@ struct TextureAsset {
         strncpy(filepath, path.c_str(), sizeof(filepath) - 1);
         filepath[sizeof(filepath) - 1] = '\0';
         
+        std::cout << "[DEBUG] Loading image: " << path << " (" << width << "x" << height << ", " << channels << " channels)\n";
+        
         // Create texture using unified Renderer interface
         TextureSpec spec;
         spec.width = width;
@@ -232,6 +234,7 @@ struct TextureAsset {
         }
         
         renderer_texture = renderer->createTexture(spec);
+        std::cout << "[DEBUG] Created texture handle: " << renderer_texture << " (INVALID_TEXTURE=" << INVALID_TEXTURE << ")\n";
         stbi_image_free(data);
         
         if (renderer_texture != INVALID_TEXTURE) {
@@ -253,10 +256,13 @@ struct MediaLibrary {
     TextureHandle video_texture = INVALID_TEXTURE;
     bool is_video_loaded = false;
     
-    ~MediaLibrary() {
+    void unload_video() {
         if (renderer && video_texture != INVALID_TEXTURE) {
             renderer->deleteTexture(video_texture);
+            video_texture = INVALID_TEXTURE;
         }
+        is_video_loaded = false;
+        video_decoder.close();
     }
     
     bool add_texture(const std::string& path, Renderer* r) {
@@ -1032,6 +1038,14 @@ int main(int argc, char** argv)
                     }
                 }
             }
+            
+            if (media_library.is_video_loaded) {
+                ImGui::SameLine();
+                if (ImGui::Button("Clear Video (Use Images)")) {
+                    media_library.unload_video();
+                    std::cout << "Video unloaded, ready to display images\n";
+                }
+            }
 
             ImGui::Separator();
 
@@ -1082,10 +1096,14 @@ int main(int argc, char** argv)
                 }
                 
                 ImGui::Text("Frame: %d / %d", media_library.video_decoder.current_frame, media_library.video_decoder.total_frames);
-            } else if (!media_library.is_video_loaded) {
+            }
+            
+            // Always show image preview if no video is loaded and we have images
+            if (!media_library.is_video_loaded && !media_library.textures.empty()) {
                 TextureAsset* selected = media_library.get_selected();
                 if (selected && selected->renderer_texture != INVALID_TEXTURE) {
-                    ImGui::Text("Selected: %s", selected->filepath);
+                    ImGui::Separator();
+                    ImGui::Text("Image: %s", selected->filepath);
                     ImGui::Text("Resolution: %dx%d", selected->width, selected->height);
 
                     // Display texture preview (scaled to fit in UI)
@@ -1105,11 +1123,9 @@ int main(int argc, char** argv)
                     ImGui::Checkbox("Playing##media", &is_playing);
                     ImGui::SliderFloat("Playback Time##media", &playback_time, 0.0f, 10.0f);
                     ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-                } else {
-                    ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "No texture selected");
                 }
-            }
-
+            } else if (!media_library.is_video_loaded && media_library.textures.empty()) {
+                ImGui::Text("No images or video loaded");
             }
         }
 
@@ -1436,18 +1452,32 @@ int main(int argc, char** argv)
                 const Quad& quad = quads[layer.quad_idx];
                 TextureHandle texture = INVALID_TEXTURE;
 
-                // Get texture from media library (simplified: use video if playing, else selected)
-                if (media_library.is_video_loaded && media_library.video_texture != INVALID_TEXTURE) {
+                // Get texture priority: videotexture if playing, else selected image
+                if (media_library.is_video_loaded && is_playing && media_library.video_texture != INVALID_TEXTURE) {
                     texture = media_library.video_texture;
+                    std::cout << "[DEBUG] Using video texture: " << texture << "\n";
                 } else {
+                    // Try to use selected image
                     TextureAsset* asset = media_library.get_selected();
-                    if (asset && asset->renderer_texture != INVALID_TEXTURE) texture = asset->renderer_texture;
+                    if (asset) {
+                        std::cout << "[DEBUG] Selected asset: " << asset->filepath << " (handle=" << asset->renderer_texture 
+                                  << ", is_video_loaded=" << media_library.is_video_loaded << ")\n";
+                        if (asset->renderer_texture != INVALID_TEXTURE) {
+                            texture = asset->renderer_texture;
+                        }
+                    } else {
+                        std::cout << "[DEBUG] No selected texture asset\n";
+                    }
                 }
 
                 if (texture != INVALID_TEXTURE) {
                     float final_opacity = layer.opacity * show_controller.global_opacity;
+                    std::cout << "[DEBUG] Drawing quad '" << quad.name << "' with texture " << texture 
+                              << " (opacity=" << final_opacity << ")\n";
                     // Note: Brightness control moved to shader if needed
                     renderer->drawQuad(quad, texture, final_opacity, layer.blend_mode);
+                } else {
+                    std::cout << "[DEBUG] Skipping layer (no valid texture)\n";
                 }
             }
             
