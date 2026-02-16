@@ -130,4 +130,9 @@ private:
     bool createQuadMesh();
     bool createDescriptorPool();
     bool createGraphicsPipeline(ShaderHandle handle, const ShaderImpl& shader);
+
+    // Swapchain helpers
+    bool createSwapchain();
+    bool recreateSwapchain();
+    void cleanupSwapchain();
 };
