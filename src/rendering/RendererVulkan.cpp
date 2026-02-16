@@ -6,6 +6,7 @@
 #include "VulkanUtils.h"
 
 #include <cstring>
+#include <GLFW/glfw3.h>
 
 #ifdef __APPLE__
     #define VK_USE_PLATFORM_METAL_KHR
@@ -145,6 +146,56 @@ bool RendererVulkan::initialize(uint32_t width, uint32_t height, void* nativeWin
                 return false;
             }
             m_swapchain_image_views[i] = iv;
+        }
+        // Create render pass and framebuffers
+        // Use a simple render pass with one color attachment
+        VkAttachmentDescription colorAttachment{};
+        colorAttachment.format = surfaceFormat.format;
+        colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference colorAttachmentRef{};
+        colorAttachmentRef.attachment = 0;
+        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colorAttachmentRef;
+
+        VkRenderPassCreateInfo rpInfo{};
+        rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rpInfo.attachmentCount = 1;
+        rpInfo.pAttachments = &colorAttachment;
+        rpInfo.subpassCount = 1;
+        rpInfo.pSubpasses = &subpass;
+
+        if (vkCreateRenderPass(m_device, &rpInfo, nullptr, &m_render_pass) != VK_SUCCESS) {
+            std::cerr << "Failed to create render pass" << std::endl;
+            return false;
+        }
+
+        m_framebuffers.resize(scImageCount);
+        for (uint32_t i = 0; i < scImageCount; ++i) {
+            VkImageView attachments[1] = { m_swapchain_image_views[i] };
+            VkFramebufferCreateInfo fbInfo{};
+            fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            fbInfo.renderPass = m_render_pass;
+            fbInfo.attachmentCount = 1;
+            fbInfo.pAttachments = attachments;
+            fbInfo.width = extent.width;
+            fbInfo.height = extent.height;
+            fbInfo.layers = 1;
+
+            if (vkCreateFramebuffer(m_device, &fbInfo, nullptr, &m_framebuffers[i]) != VK_SUCCESS) {
+                std::cerr << "Failed to create framebuffer" << std::endl;
+                return false;
+            }
         }
     }
 
@@ -304,7 +355,36 @@ void RendererVulkan::shutdown() {
 }
 
 void RendererVulkan::cleanupVulkan() {
-    // TODO: Cleanup Vulkan resources
+    if (m_device != VK_NULL_HANDLE) {
+        for (auto fb : m_framebuffers) {
+            if (fb) vkDestroyFramebuffer(m_device, fb, nullptr);
+        }
+        m_framebuffers.clear();
+
+        if (m_render_pass) vkDestroyRenderPass(m_device, m_render_pass, nullptr);
+
+        for (auto iv : m_swapchain_image_views) {
+            if (iv) vkDestroyImageView(m_device, iv, nullptr);
+        }
+        m_swapchain_image_views.clear();
+
+        if (m_swapchain) vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
+
+        if (m_surface) vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+
+        if (m_cmd_pool) vkDestroyCommandPool(m_device, m_cmd_pool, nullptr);
+
+        if (m_fence) vkDestroyFence(m_device, m_fence, nullptr);
+        if (m_image_available_semaphore) vkDestroySemaphore(m_device, m_image_available_semaphore, nullptr);
+        if (m_render_finished_semaphore) vkDestroySemaphore(m_device, m_render_finished_semaphore, nullptr);
+
+        vkDestroyDevice(m_device, nullptr);
+        m_device = VK_NULL_HANDLE;
+    }
+    if (m_instance) {
+        vkDestroyInstance(m_instance, nullptr);
+        m_instance = VK_NULL_HANDLE;
+    }
 }
 
 TextureHandle RendererVulkan::createTexture(const TextureSpec& spec) {
@@ -396,7 +476,68 @@ void RendererVulkan::drawQuad(const Quad& quad, TextureHandle texture, float opa
 }
 
 void RendererVulkan::present() {
-    // TODO: Submitir command buffers y presentar
+    if (m_swapchain == VK_NULL_HANDLE) return;
+    // Acquire next image
+    uint32_t imageIndex = 0;
+    VkResult res = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, m_image_available_semaphore, VK_NULL_HANDLE, &imageIndex);
+    if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) return;
+
+    // Wait fence
+    vkWaitForFences(m_device, 1, &m_fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(m_device, 1, &m_fence);
+
+    // Record a simple command buffer that begins the render pass and clears the attachment
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    vkResetCommandBuffer(m_cmd_buffer, 0);
+    vkBeginCommandBuffer(m_cmd_buffer, &beginInfo);
+
+    VkClearValue clearColor = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
+    VkRenderPassBeginInfo rpBegin{};
+    rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpBegin.renderPass = m_render_pass;
+    rpBegin.framebuffer = m_framebuffers[imageIndex];
+    rpBegin.renderArea.offset = {0,0};
+    rpBegin.renderArea.extent = {m_width, m_height};
+    rpBegin.clearValueCount = 1;
+    rpBegin.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(m_cmd_buffer, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+    // No draw calls yet (pipeline unbound)
+    vkCmdEndRenderPass(m_cmd_buffer);
+
+    vkEndCommandBuffer(m_cmd_buffer);
+
+    VkSemaphore waitSemaphores[] = { m_image_available_semaphore };
+    VkSemaphore signalSemaphores[] = { m_render_finished_semaphore };
+    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &m_cmd_buffer;
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = signalSemaphores;
+
+    if (vkQueueSubmit(m_queue, 1, &submitInfo, m_fence) != VK_SUCCESS) {
+        std::cerr << "Failed to submit draw command buffer" << std::endl;
+        return;
+    }
+
+    VkPresentInfoKHR presentInfo{};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = signalSemaphores;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = &m_swapchain;
+    presentInfo.pImageIndices = &imageIndex;
+
+    vkQueuePresentKHR(m_queue, &presentInfo);
 }
 
 void RendererVulkan::resize(uint32_t width, uint32_t height) {

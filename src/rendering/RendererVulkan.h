@@ -12,7 +12,7 @@ public:
     RendererVulkan();
     ~RendererVulkan() override;
 
-    bool initialize(uint32_t width, uint32_t height) override;
+    bool initialize(uint32_t width, uint32_t height, void* nativeWindow = nullptr) override;
     void shutdown() override;
 
     TextureHandle createTexture(const TextureSpec& spec) override;
@@ -54,6 +54,8 @@ private:
     VkSwapchainKHR m_swapchain = VK_NULL_HANDLE;
     std::vector<VkImage> m_swapchain_images;
     std::vector<VkImageView> m_swapchain_image_views;
+    VkRenderPass m_render_pass = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> m_framebuffers;
 
     struct TextureImpl {
         VkImage image = VK_NULL_HANDLE;
