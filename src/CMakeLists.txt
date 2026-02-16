@@ -54,6 +54,19 @@ target_link_libraries(VivaLux PRIVATE
   PkgConfig::FFMPEG
 )
 
+# macOS-specific frameworks for FFmpeg
+if(APPLE)
+  target_link_libraries(VivaLux PRIVATE
+    "-framework VideoToolbox"
+    "-framework CoreFoundation"
+    "-framework CoreMedia"
+    "-framework CoreVideo"
+    "-framework CoreServices"
+    "-framework AVFoundation"
+    "-framework IOSurface"
+  )
+endif()
+
 # Vulkan support (link if available)
 if(Vulkan_FOUND)
   target_link_libraries(VivaLux PRIVATE Vulkan::Vulkan)
