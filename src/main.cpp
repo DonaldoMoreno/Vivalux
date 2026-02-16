@@ -33,6 +33,11 @@ extern "C" {
 #include <libavutil/time.h>
 }
 
+#include "rendering/Renderer.h"
+#include "rendering/RendererFactory.h"
+
+#include <nfd.h>
+
 // Phase 5: Video decoder using FFmpeg
 class VideoDecoder {
 public:
@@ -180,7 +185,8 @@ public:
 
 // Phase 4: Texture/Media management structure
 struct TextureAsset {
-    GLuint gl_texture = 0;
+    Renderer* renderer = nullptr;  // Platform renderer for texture creation
+    TextureHandle renderer_texture = INVALID_TEXTURE;
     int width = 0, height = 0;
     int channels = 0;
     char filepath[256] = {};
@@ -188,10 +194,18 @@ struct TextureAsset {
     TextureAsset() = default;
     
     ~TextureAsset() {
-        if (gl_texture) glDeleteTextures(1, &gl_texture);
+        if (renderer && renderer_texture != INVALID_TEXTURE) {
+            renderer->deleteTexture(renderer_texture);
+        }
     }
     
-    bool load_from_file(const std::string& path) {
+    bool load_from_file(const std::string& path, Renderer* r) {
+        if (!r) {
+            std::cerr << "No renderer provided for texture loading\n";
+            return false;
+        }
+        
+        renderer = r;
         int w, h, c;
         unsigned char* data = stbi_load(path.c_str(), &w, &h, &c, 4);  // Force RGBA
         if (!data) {
@@ -205,36 +219,60 @@ struct TextureAsset {
         strncpy(filepath, path.c_str(), sizeof(filepath) - 1);
         filepath[sizeof(filepath) - 1] = '\0';
         
-        // Create GL texture
-        if (gl_texture) glDeleteTextures(1, &gl_texture);
-        glGenTextures(1, &gl_texture);
-        glBindTexture(GL_TEXTURE_2D, gl_texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        std::cout << "[DEBUG] Loading image: " << path << " (" << width << "x" << height << ", " << channels << " channels)\n";
         
+        // Create texture using unified Renderer interface
+        TextureSpec spec;
+        spec.width = width;
+        spec.height = height;
+        spec.format = PixelFormat::RGBA8;
+        spec.data = data;
+        
+        // Delete old texture if exists
+        if (renderer_texture != INVALID_TEXTURE) {
+            renderer->deleteTexture(renderer_texture);
+        }
+        
+        renderer_texture = renderer->createTexture(spec);
+        std::cout << "[DEBUG] Created texture handle: " << renderer_texture << " (INVALID_TEXTURE=" << INVALID_TEXTURE << ")\n";
         stbi_image_free(data);
-        std::cout << "Loaded texture: " << path << " (" << width << "x" << height << ")\n";
-        return true;
+        
+        if (renderer_texture != INVALID_TEXTURE) {
+            std::cout << "Loaded texture: " << path << " (" << width << "x" << height << ")\n";
+            return true;
+        } else {
+            std::cerr << "Failed to create texture handle\n";
+            return false;
+        }
     }
 };
 
 // Phase 4: Media/Project asset management
 struct MediaLibrary {
+    Renderer* renderer = nullptr;  // Platform renderer for texture creation
     std::map<std::string, TextureAsset> textures;  // name -> texture
     std::string selected_texture;
     VideoDecoder video_decoder;
-    GLuint video_texture = 0;
+    TextureHandle video_texture = INVALID_TEXTURE;
     bool is_video_loaded = false;
     
-    ~MediaLibrary() {
-        if (video_texture) glDeleteTextures(1, &video_texture);
+    void unload_video() {
+        if (renderer && video_texture != INVALID_TEXTURE) {
+            renderer->deleteTexture(video_texture);
+            video_texture = INVALID_TEXTURE;
+        }
+        is_video_loaded = false;
+        video_decoder.close();
     }
     
-    bool add_texture(const std::string& path) {
+    bool add_texture(const std::string& path, Renderer* r) {
+        if (!r) {
+            std::cerr << "No renderer provided to MediaLibrary\n";
+            return false;
+        }
+        
         TextureAsset asset;
-        if (!asset.load_from_file(path)) return false;
+        if (!asset.load_from_file(path, r)) return false;
         
         std::string name = std::filesystem::path(path).filename().string();
         textures[name] = std::move(asset);
@@ -242,35 +280,43 @@ struct MediaLibrary {
         return true;
     }
     
-    bool load_video(const std::string& path) {
+    bool load_video(const std::string& path, Renderer* r) {
+        if (!r) {
+            std::cerr << "No renderer provided to MediaLibrary\n";
+            return false;
+        }
+        
+        renderer = r;
         if (!video_decoder.open(path)) return false;
         
-        // Create initial video texture
-        if (video_texture) glDeleteTextures(1, &video_texture);
-        glGenTextures(1, &video_texture);
-        glBindTexture(GL_TEXTURE_2D, video_texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, video_decoder.width, video_decoder.height, 
-                    0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        // Create initial video texture using unified Renderer interface
+        if (video_texture != INVALID_TEXTURE) {
+            renderer->deleteTexture(video_texture);
+        }
         
-        is_video_loaded = true;
+        TextureSpec spec;
+        spec.width = video_decoder.width;
+        spec.height = video_decoder.height;
+        spec.format = PixelFormat::RGBA8;
+        spec.data = nullptr;  // Will be updated with frames
+        
+        video_texture = renderer->createTexture(spec);
+        
+        is_video_loaded = (video_texture != INVALID_TEXTURE);
         selected_texture = std::filesystem::path(path).filename().string();
-        return true;
+        return is_video_loaded;
     }
     
     bool update_video_frame() {
-        if (!is_video_loaded || !video_texture) return false;
+        if (!is_video_loaded || !renderer || video_texture == INVALID_TEXTURE) return false;
         
         uint8_t* rgba_data = nullptr;
         int w, h;
         if (!video_decoder.get_frame(rgba_data, w, h)) return false;
         
-        // Update texture with new frame
-        glBindTexture(GL_TEXTURE_2D, video_texture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba_data);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        // Update texture with new frame using unified Renderer interface
+        uint32_t data_size = w * h * 4;  // RGBA
+        renderer->updateTexture(video_texture, rgba_data, data_size);
         return true;
     }
     
@@ -282,21 +328,7 @@ struct MediaLibrary {
     }
 };
 
-// Phase 3: Quad mapping structure
-struct Quad {
-    ImVec2 corners[4];  // 0=TL, 1=TR, 2=BR, 3=BL
-    char name[64];
-    bool selected = false;
-    
-    Quad(const std::string& n = "") : selected(false) {
-        strncpy(name, n.c_str(), sizeof(name) - 1);
-        name[sizeof(name) - 1] = '\0';
-        corners[0] = ImVec2(100, 100);
-        corners[1] = ImVec2(300, 100);
-        corners[2] = ImVec2(300, 300);
-        corners[3] = ImVec2(100, 300);
-    }
-};
+// NOTE: Quad struct is now defined in rendering/Renderer.h - removed duplicate here
 
 // Phase 6: Layer management structure
 struct Layer {
@@ -304,7 +336,7 @@ struct Layer {
     int quad_idx = -1;  // Reference to quad
     int texture_idx = -1;  // Index into media library textures
     float opacity = 1.0f;
-    int blend_mode = 0;  // 0=Alpha, 1=Add, 2=Multiply
+    BlendMode blend_mode = BlendMode::Alpha;  // Unified blend mode enum
     bool visible = true;
     int z_order = 0;  // Higher = on top
     
@@ -390,7 +422,7 @@ struct Scene {
             layer_obj["quad_idx"] = l.quad_idx;
             layer_obj["texture_idx"] = l.texture_idx;
             layer_obj["opacity"] = l.opacity;
-            layer_obj["blend_mode"] = l.blend_mode;
+            layer_obj["blend_mode"] = static_cast<int>(l.blend_mode);  // Convert enum to int for JSON
             layer_obj["visible"] = l.visible;
             layer_obj["z_order"] = l.z_order;
             j["layers"].push_back(layer_obj);
@@ -413,7 +445,7 @@ struct Scene {
                     if (quad_obj.contains("corners")) {
                         const auto& corners = quad_obj["corners"];
                         for (int i = 0; i < 4 && i < (int)corners.size(); ++i) {
-                            q.corners[i] = ImVec2(corners[i]["x"], corners[i]["y"]);
+                            q.corners[i] = glm::vec2(corners[i]["x"], corners[i]["y"]);  // Updated to glm::vec2
                         }
                     }
                     quads.push_back(q);
@@ -428,7 +460,8 @@ struct Scene {
                     l.quad_idx = layer_obj.value("quad_idx", -1);
                     l.texture_idx = layer_obj.value("texture_idx", -1);
                     l.opacity = layer_obj.value("opacity", 1.0f);
-                    l.blend_mode = layer_obj.value("blend_mode", 0);
+                    int blend_int = layer_obj.value("blend_mode", 0);
+                    l.blend_mode = static_cast<BlendMode>(blend_int);  // Convert int from JSON to enum
                     l.visible = layer_obj.value("visible", true);
                     l.z_order = layer_obj.value("z_order", 0);
                     layers.push_back(l);
@@ -443,162 +476,7 @@ struct Scene {
     }
 };
 
-// Phase 8: Simple projection/composition renderer
-class ProjectionRenderer {
-public:
-    GLuint quad_vao = 0, quad_vbo = 0, quad_ebo = 0;
-    GLuint shader_program = 0;
-    bool is_initialized = false;
-    
-    ProjectionRenderer() = default;
-    
-    ~ProjectionRenderer() { cleanup(); }
-    
-    void cleanup() {
-        if (quad_vao) glDeleteVertexArrays(1, &quad_vao);
-        if (quad_vbo) glDeleteBuffers(1, &quad_vbo);
-        if (quad_ebo) glDeleteBuffers(1, &quad_ebo);
-        if (shader_program) glDeleteProgram(shader_program);
-    }
-    
-    bool init() {
-        // Simple vertex shader
-        const char* vs_src = R"(
-            #version 410 core
-            layout(location = 0) in vec2 pos;
-            layout(location = 1) in vec2 uv;
-            
-            out vec2 frag_uv;
-            
-            uniform vec2 corners[4];
-            uniform vec2 screen_size;
-            
-            void main() {
-                vec2 quad_corner = mix(mix(corners[3], corners[2], uv.x),
-                                       mix(corners[0], corners[1], uv.x), uv.y);
-                
-                vec2 ndc = (quad_corner / screen_size) * 2.0 - 1.0;
-                ndc.y = -ndc.y;  // Flip Y
-                
-                gl_Position = vec4(ndc, 0.0, 1.0);
-                frag_uv = uv;
-            }
-        )";
-        
-        // Simple fragment shader
-        const char* fs_src = R"(
-            #version 410 core
-            in vec2 frag_uv;
-            out vec4 color;
-            
-            uniform sampler2D tex;
-            uniform float opacity;
-            uniform int blend_mode;  // 0=alpha, 1=add, 2=multiply
-            uniform float brightness;
-            
-            void main() {
-                vec4 tex_color = texture(tex, frag_uv);
-                tex_color.rgb *= brightness;
-                tex_color.a *= opacity;
-                
-                if (blend_mode == 1) {
-                    // Additive blend
-                    color = vec4(tex_color.rgb, 1.0);
-                } else if (blend_mode == 2) {
-                    // Multiply blend
-                    color = vec4(tex_color.rgb, tex_color.a);
-                } else {
-                    // Alpha blend (default)
-                    color = tex_color;
-                }
-            }
-        )";
-        
-        // Compile shaders
-        GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vs, 1, &vs_src, nullptr);
-        glCompileShader(vs);
-        
-        GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fs, 1, &fs_src, nullptr);
-        glCompileShader(fs);
-        
-        // Link program
-        shader_program = glCreateProgram();
-        glAttachShader(shader_program, vs);
-        glAttachShader(shader_program, fs);
-        glLinkProgram(shader_program);
-        
-        glDeleteShader(vs);
-        glDeleteShader(fs);
-        
-        // Create quad mesh (unit quad 0-1)
-        float vertices[] = {
-            0.0f, 0.0f, 0.0f, 0.0f,  // TL
-            1.0f, 0.0f, 1.0f, 0.0f,  // TR
-            1.0f, 1.0f, 1.0f, 1.0f,  // BR
-            0.0f, 1.0f, 0.0f, 1.0f,  // BL
-        };
-        
-        unsigned int indices[] = {0, 1, 2, 0, 2, 3};
-        
-        glGenVertexArrays(1, &quad_vao);
-        glGenBuffers(1, &quad_vbo);
-        glGenBuffers(1, &quad_ebo);
-        
-        glBindVertexArray(quad_vao);
-        glBindBuffer(GL_ARRAY_BUFFER, quad_vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-        
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, quad_ebo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-        
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-        
-        is_initialized = true;
-        return true;
-    }
-    
-    void render_quad(const Quad& q, GLuint texture, float opacity, int blend_mode, float brightness = 1.0f) {
-        if (!is_initialized || !texture) return;
-        
-        glUseProgram(shader_program);
-        
-        // Set up uniforms
-        ImVec2 corners[4] = {q.corners[0], q.corners[1], q.corners[2], q.corners[3]};
-        int corners_loc = glGetUniformLocation(shader_program, "corners");
-        glUniform2fv(corners_loc, 4, (float*)corners);
-        
-        int screen_size_loc = glGetUniformLocation(shader_program, "screen_size");
-        glUniform2f(screen_size_loc, ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y);
-        
-        int opacity_loc = glGetUniformLocation(shader_program, "opacity");
-        glUniform1f(opacity_loc, opacity);
-        
-        int blend_mode_loc = glGetUniformLocation(shader_program, "blend_mode");
-        glUniform1i(blend_mode_loc, blend_mode);
-        
-        int brightness_loc = glGetUniformLocation(shader_program, "brightness");
-        glUniform1f(brightness_loc, brightness);
-        
-        // Bind texture
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        int tex_loc = glGetUniformLocation(shader_program, "tex");
-        glUniform1i(tex_loc, 0);
-        
-        // Render
-        glBindVertexArray(quad_vao);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
-    }
-};
+// Phase 8: Composition rendering now handled by unified Renderer interface
 
 // Phase 9: Show Mode live controls and OSD
 struct ShowModeController {
@@ -672,9 +550,37 @@ struct ShowModeController {
         ImU32 help_color = ImGui::GetColorU32(ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
         draw_list->AddText(pos, help_color, "SPACE: Play/Pause | Arrows: Seek/Adjust | +/-: Brightness | ESC: Exit");
         pos.y += 18;
-        draw_list->AddText(pos, help_color, "H: Toggle OSD | O: Toggle All Layers");
+        draw_list->AddText(pos, help_color, "H: Toggle OSD | O: Toggle All Layers | R: Restart Animation");
     }
 };
+
+// ============================================================================
+// File Dialog Helpers
+// ============================================================================
+
+std::string open_file_dialog(const char* filter_ext = nullptr) {
+    nfdchar_t* out_path = nullptr;
+    nfdresult_t result = NFD_OpenDialog(&out_path, nullptr, nullptr);
+    
+    if (result == NFD_OKAY) {
+        std::string path(out_path);
+        free(out_path);
+        return path;
+    }
+    return "";
+}
+
+std::string save_file_dialog(const char* filter_ext = "json", const char* default_name = "") {
+    nfdchar_t* out_path = nullptr;
+    nfdresult_t result = NFD_SaveDialog(&out_path, nullptr, default_name);
+    
+    if (result == NFD_OKAY) {
+        std::string path(out_path);
+        free(out_path);
+        return path;
+    }
+    return "";
+}
 
 int main(int argc, char** argv)
 {
@@ -717,6 +623,19 @@ int main(int argc, char** argv)
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 410");
 
+    // Create platform-specific renderer (OpenGL on Linux/Windows, Vulkan on macOS)
+    auto renderer = createPlatformRenderer();
+    if (!renderer) {
+        std::cerr << "Failed to create platform renderer\n";
+        return -1;
+    }
+
+    // Initialize renderer with window handle (needed for Vulkan surface creation)
+    if (!renderer->initialize(1280, 720, window)) {
+        std::cerr << "Failed to initialize renderer\n";
+        return -1;
+    }
+
     bool show_demo = true;
     // Phase 2: monitor selection state
     int selected_monitor = 0;
@@ -729,9 +648,14 @@ int main(int argc, char** argv)
     bool is_placing_quad = false;
     int quad_placement_corner = 0;  // which corner we're placing (0-3)
     float snap_distance = 10.0f;    // pixels
+    
+    // Drag & drop vertex editing
+    int dragging_quad_idx = -1;      // which quad is being dragged (-1 if none)
+    int dragging_corner_idx = -1;    // which corner is being dragged (0-3, -1 if none)
 
     // Phase 4: media/texture management
     MediaLibrary media_library;
+    media_library.renderer = renderer.get();  // Store reference to renderer
     char file_input_buffer[256] = {};  // For file path input
     bool is_playing = false;
     float playback_time = 0.0f;
@@ -746,8 +670,7 @@ int main(int argc, char** argv)
 
     // Phase 8: show mode and composition rendering
     bool show_mode = false;
-    ProjectionRenderer projection_renderer;
-    projection_renderer.init();
+    // NOTE: ProjectionRenderer removed - now using unified Renderer interface
 
     // Phase 9: Show Mode live controls
     ShowModeController show_controller;
@@ -787,7 +710,9 @@ int main(int argc, char** argv)
         // Phase 3: Handle mouse clicks for quad placement (only if not over ImGui and not in show mode)
         if (!show_mode && is_placing_quad && !ImGui::GetIO().WantCaptureMouse) {
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                ImVec2 mouse_pos = ImGui::GetMousePos();
+                ImVec2 imgui_mouse_pos = ImGui::GetMousePos();
+                // Convert ImVec2 (ImGui) to glm::vec2 (Renderer)
+                glm::vec2 mouse_pos(imgui_mouse_pos.x, imgui_mouse_pos.y);
                 if (selected_quad_idx >= 0 && selected_quad_idx < (int)quads.size()) {
                     quads[selected_quad_idx].corners[quad_placement_corner] = mouse_pos;
                     quad_placement_corner = (quad_placement_corner + 1) % 4;
@@ -799,17 +724,106 @@ int main(int argc, char** argv)
             }
         }
 
+        // Drag & drop vertex editing (only if not over ImGui and not in show mode)
+        if (!show_mode && selected_quad_idx >= 0 && selected_quad_idx < (int)quads.size() && !ImGui::GetIO().WantCaptureMouse) {
+            ImVec2 imgui_mouse_pos = ImGui::GetMousePos();
+            glm::vec2 mouse_pos(imgui_mouse_pos.x, imgui_mouse_pos.y);
+            const Quad& quad = quads[selected_quad_idx];
+            
+            // Check if mouse is over a corner
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                for (int i = 0; i < 4; ++i) {
+                    float dist = glm::distance(mouse_pos, quad.corners[i]);
+                    if (dist < 15.0f) {  // 15-pixel hit radius
+                        dragging_quad_idx = selected_quad_idx;
+                        dragging_corner_idx = i;
+                        break;
+                    }
+                }
+            }
+            
+            // Handle dragging
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && dragging_quad_idx == selected_quad_idx && dragging_corner_idx >= 0) {
+                quads[dragging_quad_idx].corners[dragging_corner_idx] = mouse_pos;
+            }
+            
+            // Stop dragging
+            if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                dragging_quad_idx = -1;
+                dragging_corner_idx = -1;
+            }
+        } else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            dragging_quad_idx = -1;
+            dragging_corner_idx = -1;
+        }
+
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+
+        // Top-level main menu and panel visibility toggles
+        static bool show_output = true;
+        static bool show_surface = true;
+        static bool show_media = true;
+        static bool show_layers = true;
+        static bool show_scene = true;
+        static bool show_showmode = true;
+
+        if (ImGui::Begin("Main Window", nullptr, ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoCollapse)) {
+            if (ImGui::BeginMenuBar()) {
+                if (ImGui::BeginMenu("File")) {
+                    if (ImGui::MenuItem("Quit")) glfwSetWindowShouldClose(window, GLFW_TRUE);
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("View")) {
+                    ImGui::MenuItem("Output / Display", NULL, &show_output);
+                    ImGui::MenuItem("Surface Mapping", NULL, &show_surface);
+                    ImGui::MenuItem("Media Library", NULL, &show_media);
+                    ImGui::MenuItem("Layers", NULL, &show_layers);
+                    ImGui::MenuItem("Scene Management", NULL, &show_scene);
+                    ImGui::MenuItem("Show Mode", NULL, &show_showmode);
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenuBar();
+            }
+
+            // Two-pane layout: left sidebar (sections), right content (active section)
+            static int active_section = 0;  // 0=Output, 1=Surface, 2=Media, 3=Layers, 4=Scene, 5=ShowMode
+            static bool col_initialized = false;
+
+            ImGui::Columns(2, "MainLayout", true);
+            if (!col_initialized) {
+                ImGui::SetColumnWidth(0, 180.0f);  // Left sidebar width
+                col_initialized = true;
+            }
+
+            // --- LEFT SIDEBAR: Section selection ---
+            {
+                ImGui::BeginChild("Sidebar", ImVec2(0, 0), ImGuiChildFlags_Border);
+                ImGui::Text("Sections:");
+                ImGui::Separator();
+
+                if (show_output && ImGui::Selectable("Output / Display", active_section == 0)) active_section = 0;
+                if (show_surface && ImGui::Selectable("Surface Mapping", active_section == 1)) active_section = 1;
+                if (show_media && ImGui::Selectable("Media Library", active_section == 2)) active_section = 2;
+                if (show_layers && ImGui::Selectable("Layers", active_section == 3)) active_section = 3;
+                if (show_scene && ImGui::Selectable("Scene Management", active_section == 4)) active_section = 4;
+                if (show_showmode && !show_mode && ImGui::Selectable("Show Mode", active_section == 5)) active_section = 5;
+
+                ImGui::EndChild();
+            }
+
+            ImGui::NextColumn();
+
+            // --- RIGHT PANE: Content for active section ---
+            {
+                ImGui::BeginChild("Content", ImVec2(0, 0), ImGuiChildFlags_Border);
 
         if (!show_mode && show_demo)
             ImGui::ShowDemoWindow(&show_demo);
 
         // --- Phase 2 UI: Monitor enumeration & fullscreen control ---
-        {
-            ImGui::Begin("Output / Display");
-
+        if (active_section == 0) {
             ImGui::Text("Detected monitors: %d", (int)monitors.size());
 
             // Create a combo listing monitors
@@ -872,14 +886,10 @@ int main(int argc, char** argv)
                     is_fullscreen = false;
                 }
             }
-
-            ImGui::End();
         }
 
         // --- Phase 3 UI: Quad mapping control ---
-        {
-            ImGui::Begin("Surface Mapping");
-
+        if (active_section == 1) {
             ImGui::Text("Quads: %d", (int)quads.size());
 
             if (ImGui::Button("Add New Quad")) {
@@ -913,12 +923,13 @@ int main(int argc, char** argv)
 
                 ImGui::InputText("Quad Name", q.name, sizeof(q.name));
 
+                ImGui::TextDisabled("(Drag corners on canvas to edit | Or use sliders below)");
                 ImGui::Text("Corners:");
                 for (int i = 0; i < 4; ++i) {
                     float corners[2] = {q.corners[i].x, q.corners[i].y};
                     std::string corner_label = "Corner " + std::to_string(i);
                     ImGui::SliderFloat2(corner_label.c_str(), corners, 0.0f, 1280.0f);
-                    q.corners[i] = ImVec2(corners[0], corners[1]);
+                    q.corners[i] = glm::vec2(corners[0], corners[1]);  // Updated to glm::vec2
                 }
 
                 if (!is_placing_quad) {
@@ -934,16 +945,16 @@ int main(int argc, char** argv)
                     }
                 }
             }
-
-            ImGui::End();
         }
 
-        // --- Render quads on canvas using ImGui draw list ---
+        // --- Render quads on canvas using ImGui draw list (for all quads) ---
         {
             ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
             ImU32 quad_color = ImGui::GetColorU32(ImVec4(0.0f, 1.0f, 0.0f, 0.8f));
             ImU32 selected_color = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 0.0f, 0.8f));
             ImU32 corner_color = ImGui::GetColorU32(ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
+            ImU32 dragging_color = ImGui::GetColorU32(ImVec4(1.0f, 0.0f, 1.0f, 1.0f));
+            ImU32 hovered_corner_color = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
 
             for (int i = 0; i < (int)quads.size(); ++i) {
                 const Quad& q = quads[i];
@@ -952,22 +963,44 @@ int main(int argc, char** argv)
                 // Draw quad outline
                 for (int j = 0; j < 4; ++j) {
                     int next = (j + 1) % 4;
-                    draw_list->AddLine(q.corners[j], q.corners[next], color, 2.0f);
+                    draw_list->AddLine(ImVec2(q.corners[j].x, q.corners[j].y), 
+                                      ImVec2(q.corners[next].x, q.corners[next].y), color, 2.0f);
                 }
 
-                // Draw corner points
-                for (int j = 0; j < 4; ++j) {
-                    draw_list->AddCircleFilled(q.corners[j], 4.0f, corner_color);
+                // Draw corner points - highlight if being dragged
+                if (i == selected_quad_idx && !show_mode) {
+                    ImVec2 mouse_pos = ImGui::GetMousePos();
+                    for (int j = 0; j < 4; ++j) {
+                        ImU32 corner_c = corner_color;
+                        float radius = 5.0f;
+                        
+                        // Check if this corner is being hovered or dragged
+                        float dist = glm::distance(glm::vec2(mouse_pos.x, mouse_pos.y), q.corners[j]);
+                        if (dragging_quad_idx == i && dragging_corner_idx == j) {
+                            corner_c = dragging_color;
+                            radius = 8.0f;
+                        } else if (dist < 15.0f) {
+                            corner_c = hovered_corner_color;
+                            radius = 6.0f;
+                        }
+                        
+                        draw_list->AddCircleFilled(ImVec2(q.corners[j].x, q.corners[j].y), radius, corner_c);
+                    }
+                } else {
+                    // Draw smaller corner points for unselected quads
+                    for (int j = 0; j < 4; ++j) {
+                        draw_list->AddCircleFilled(ImVec2(q.corners[j].x, q.corners[j].y), 4.0f, corner_color);
+                    }
                 }
             }
 
-            // Draw placement helper
+            // Draw placement helper when in placement mode
             if (is_placing_quad && selected_quad_idx >= 0 && selected_quad_idx < (int)quads.size()) {
                 const Quad& q = quads[selected_quad_idx];
                 ImU32 help_color = ImGui::GetColorU32(ImVec4(1.0f, 0.0f, 0.0f, 0.5f));
                 
                 // Highlight the corner being placed
-                draw_list->AddCircleFilled(q.corners[quad_placement_corner], 6.0f, help_color);
+                draw_list->AddCircleFilled(ImVec2(q.corners[quad_placement_corner].x, q.corners[quad_placement_corner].y), 6.0f, help_color);
                 
                 // Draw a crosshair at mouse position
                 ImVec2 mouse = ImGui::GetMousePos();
@@ -977,10 +1010,7 @@ int main(int argc, char** argv)
         }
 
         // --- Phase 4 UI: Media Library (Images/Videos) ---
-        {
-            ImGui::Begin("Media Library");
-
-            ImGui::Text("Loaded Textures: %d | Video: %s", (int)media_library.textures.size(), 
+        if (active_section == 2) {            ImGui::Text("Loaded Textures: %d | Video: %s", (int)media_library.textures.size(), 
                        media_library.is_video_loaded ? "YES" : "NO");
 
             ImGui::InputText("File Path##media", file_input_buffer, sizeof(file_input_buffer));
@@ -988,7 +1018,7 @@ int main(int argc, char** argv)
             if (ImGui::Button("Load Image")) {
                 std::string path(file_input_buffer);
                 if (!path.empty()) {
-                    if (media_library.add_texture(path)) {
+                    if (media_library.add_texture(path, renderer.get())) {
                         memset(file_input_buffer, 0, sizeof(file_input_buffer));
                     } else {
                         std::cerr << "Failed to load image: " << path << "\n";
@@ -1001,11 +1031,19 @@ int main(int argc, char** argv)
             if (ImGui::Button("Load Video")) {
                 std::string path(file_input_buffer);
                 if (!path.empty()) {
-                    if (media_library.load_video(path)) {
+                    if (media_library.load_video(path, renderer.get())) {
                         memset(file_input_buffer, 0, sizeof(file_input_buffer));
                     } else {
                         std::cerr << "Failed to load video: " << path << "\n";
                     }
+                }
+            }
+            
+            if (media_library.is_video_loaded) {
+                ImGui::SameLine();
+                if (ImGui::Button("Clear Video (Use Images)")) {
+                    media_library.unload_video();
+                    std::cout << "Video unloaded, ready to display images\n";
                 }
             }
 
@@ -1058,10 +1096,14 @@ int main(int argc, char** argv)
                 }
                 
                 ImGui::Text("Frame: %d / %d", media_library.video_decoder.current_frame, media_library.video_decoder.total_frames);
-            } else if (!media_library.is_video_loaded) {
+            }
+            
+            // Always show image preview if no video is loaded and we have images
+            if (!media_library.is_video_loaded && !media_library.textures.empty()) {
                 TextureAsset* selected = media_library.get_selected();
-                if (selected && selected->gl_texture) {
-                    ImGui::Text("Selected: %s", selected->filepath);
+                if (selected && selected->renderer_texture != INVALID_TEXTURE) {
+                    ImGui::Separator();
+                    ImGui::Text("Image: %s", selected->filepath);
                     ImGui::Text("Resolution: %dx%d", selected->width, selected->height);
 
                     // Display texture preview (scaled to fit in UI)
@@ -1074,19 +1116,17 @@ int main(int argc, char** argv)
                         preview_w = preview_size * aspect;
                     }
 
-                    ImGui::Image((ImTextureID)(intptr_t)selected->gl_texture, ImVec2(preview_w, preview_h),
+                    ImGui::Image((ImTextureID)(intptr_t)selected->renderer_texture, ImVec2(preview_w, preview_h),
                                  ImVec2(0, 1), ImVec2(1, 0));  // Flip Y for OpenGL
 
                     // Playback controls
                     ImGui::Checkbox("Playing##media", &is_playing);
                     ImGui::SliderFloat("Playback Time##media", &playback_time, 0.0f, 10.0f);
                     ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-                } else {
-                    ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1.0f), "No texture selected");
                 }
+            } else if (!media_library.is_video_loaded && media_library.textures.empty()) {
+                ImGui::Text("No images or video loaded");
             }
-
-            ImGui::End();
         }
 
         // --- Phase 5: Update video playback ---
@@ -1095,9 +1135,7 @@ int main(int argc, char** argv)
         }
 
         // --- Phase 6 UI: Layer Composition ---
-        {
-            ImGui::Begin("Layers");
-
+        if (active_section == 3) {
             ImGui::Text("Total Layers: %d", (int)compositor.layers.size());
 
             if (ImGui::Button("Add Layer")) {
@@ -1140,7 +1178,10 @@ int main(int argc, char** argv)
 
                 // Blend mode dropdown
                 const char* blend_modes[] = {"Alpha", "Add", "Multiply"};
-                ImGui::Combo("Blend Mode##layer", &layer.blend_mode, blend_modes, 3);
+                int blend_idx = static_cast<int>(layer.blend_mode);
+                if (ImGui::Combo("Blend Mode##layer", &blend_idx, blend_modes, 3)) {
+                    layer.blend_mode = static_cast<BlendMode>(blend_idx);
+                }
 
                 // Quad assignment dropdown
                 if (!quads.empty()) {
@@ -1180,13 +1221,10 @@ int main(int argc, char** argv)
                     compositor.move_layer_down(compositor.selected_layer_idx);
                 }
             }
-
-            ImGui::End();
         }
 
         // --- Phase 7 UI: Scene Management (Save/Load) ---
-        {
-            ImGui::Begin("Scene Management");
+        if (active_section == 4) {
 
             ImGui::InputText("Scene Name##scene", current_scene.name, sizeof(current_scene.name));
             ImGui::InputTextMultiline("Description##scene", current_scene.description, sizeof(current_scene.description), ImVec2(-1, 50));
@@ -1194,7 +1232,15 @@ int main(int argc, char** argv)
             ImGui::Separator();
             ImGui::Text("Save/Load Project File:");
 
-            ImGui::InputText("Save Path##scene", scene_save_path, sizeof(scene_save_path));
+            // Save Path with native file dialog
+            if (ImGui::Button("Choose Save Location...##save", ImVec2(-1, 0))) {
+                std::string selected = save_file_dialog("json", "project.json");
+                if (!selected.empty()) {
+                    strncpy(scene_save_path, selected.c_str(), sizeof(scene_save_path) - 1);
+                    scene_save_path[sizeof(scene_save_path) - 1] = '\0';
+                }
+            }
+            ImGui::TextWrapped("Save Path: %s", scene_save_path[0] ? scene_save_path : "(None selected)");
             ImGui::SameLine();
             if (ImGui::Button("Save to JSON")) {
                 std::string path(scene_save_path);
@@ -1215,7 +1261,17 @@ int main(int argc, char** argv)
                 }
             }
 
-            ImGui::InputText("Load Path##scene", scene_load_path, sizeof(scene_load_path));
+            ImGui::Separator();
+
+            // Load Path with native file dialog
+            if (ImGui::Button("Choose File to Load...##load", ImVec2(-1, 0))) {
+                std::string selected = open_file_dialog();
+                if (!selected.empty()) {
+                    strncpy(scene_load_path, selected.c_str(), sizeof(scene_load_path) - 1);
+                    scene_load_path[sizeof(scene_load_path) - 1] = '\0';
+                }
+            }
+            ImGui::TextWrapped("Load Path: %s", scene_load_path[0] ? scene_load_path : "(None selected)");
             ImGui::SameLine();
             if (ImGui::Button("Load from JSON")) {
                 std::string path(scene_load_path);
@@ -1246,16 +1302,23 @@ int main(int argc, char** argv)
             ImGui::Text("Quads: %d", (int)quads.size());
             ImGui::Text("Layers: %d", (int)compositor.layers.size());
             ImGui::Text("Name: %s", current_scene.name);
-
-            ImGui::End();
         }
 
         // --- Phase 8 UI: Show Mode Control ---
-        if (!show_mode) {
-            ImGui::Begin("Show Mode");
+        if (!show_mode && show_showmode && active_section == 5) {
 
             if (ImGui::Button("Enter Show Mode (Ctrl+Shift+P)", ImVec2(-1, 30))) {
                 show_mode = true;
+            }
+
+            if (ImGui::Button("Restart Animation (R in Show Mode)", ImVec2(-1, 0))) {
+                // Reset animation state
+                if (media_library.is_video_loaded) {
+                    media_library.video_decoder.seek_to_frame(0);
+                    is_playing = false;
+                    std::cout << "Animation restarted\n";
+                }
+                playback_time = 0.0f;
             }
 
             ImGui::Separator();
@@ -1263,9 +1326,14 @@ int main(int argc, char** argv)
             ImGui::Text("Quads to render: %d", (int)quads.size());
             ImGui::Text("Visible layers: %d", (int)compositor.layers.size());
             ImGui::TextDisabled("Press Ctrl+Shift+P to toggle");
-
-            ImGui::End();
         }
+
+                ImGui::EndChild();  // End content pane
+            }
+            ImGui::Columns(1);  // Reset to single column
+
+            // End main window
+            ImGui::End();
 
         // Rendering
         int display_w, display_h;
@@ -1349,9 +1417,21 @@ int main(int argc, char** argv)
             }
             o_pressed_last = o_pressed;
             
-            // Phase 8: Render composition to quads
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            // R: Restart animation
+            static bool r_pressed_last = false;
+            bool r_pressed = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+            if (r_pressed && !r_pressed_last) {
+                if (media_library.is_video_loaded) {
+                    media_library.video_decoder.seek_to_frame(0);
+                    is_playing = false;
+                    std::cout << "Animation restarted\n";
+                }
+                playback_time = 0.0f;
+            }
+            r_pressed_last = r_pressed;
+            
+            // Phase 8: Render composition to quads using unified Renderer
+            // Note: Renderer handles blend mode internally, no need for glEnable/glBlendFunc
 
             // Sort and render layers by z-order
             std::vector<int> layer_indices;
@@ -1370,23 +1450,36 @@ int main(int argc, char** argv)
                 }
 
                 const Quad& quad = quads[layer.quad_idx];
-                GLuint texture = 0;
+                TextureHandle texture = INVALID_TEXTURE;
 
-                // Get texture from media library (simplified: use video if playing, else selected)
-                if (media_library.is_video_loaded && media_library.video_texture) {
+                // Get texture priority: videotexture if playing, else selected image
+                if (media_library.is_video_loaded && is_playing && media_library.video_texture != INVALID_TEXTURE) {
                     texture = media_library.video_texture;
+                    std::cout << "[DEBUG] Using video texture: " << texture << "\n";
                 } else {
+                    // Try to use selected image
                     TextureAsset* asset = media_library.get_selected();
-                    if (asset && asset->gl_texture) texture = asset->gl_texture;
+                    if (asset) {
+                        std::cout << "[DEBUG] Selected asset: " << asset->filepath << " (handle=" << asset->renderer_texture 
+                                  << ", is_video_loaded=" << media_library.is_video_loaded << ")\n";
+                        if (asset->renderer_texture != INVALID_TEXTURE) {
+                            texture = asset->renderer_texture;
+                        }
+                    } else {
+                        std::cout << "[DEBUG] No selected texture asset\n";
+                    }
                 }
 
-                if (texture) {
+                if (texture != INVALID_TEXTURE) {
                     float final_opacity = layer.opacity * show_controller.global_opacity;
-                    projection_renderer.render_quad(quad, texture, final_opacity, layer.blend_mode, show_controller.brightness);
+                    std::cout << "[DEBUG] Drawing quad '" << quad.name << "' with texture " << texture 
+                              << " (opacity=" << final_opacity << ")\n";
+                    // Note: Brightness control moved to shader if needed
+                    renderer->drawQuad(quad, texture, final_opacity, layer.blend_mode);
+                } else {
+                    std::cout << "[DEBUG] Skipping layer (no valid texture)\n";
                 }
             }
-
-            glDisable(GL_BLEND);
             
             // Phase 9: Render OSD overlay
             ImGui_ImplOpenGL3_NewFrame();
