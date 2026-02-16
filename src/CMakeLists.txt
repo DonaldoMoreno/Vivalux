@@ -53,9 +53,11 @@ target_link_libraries(VivaLux PRIVATE
   PkgConfig::FFMPEG
 )
 
-# Vulkan support for macOS
-if(APPLE AND Vulkan_FOUND)
+# Vulkan support (link if available)
+if(Vulkan_FOUND)
   target_link_libraries(VivaLux PRIVATE Vulkan::Vulkan)
-  target_include_directories(VivaLux PRIVATE ${Vulkan_INCLUDE_DIRS})
+  if (DEFINED Vulkan_INCLUDE_DIRS)
+    target_include_directories(VivaLux PRIVATE ${Vulkan_INCLUDE_DIRS})
+  endif()
 endif()
 
