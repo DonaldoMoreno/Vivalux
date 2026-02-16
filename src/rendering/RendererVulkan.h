@@ -56,6 +56,12 @@ private:
     std::vector<VkImageView> m_swapchain_image_views;
     VkRenderPass m_render_pass = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> m_framebuffers;
+    
+    // Staging buffer for texture uploads
+    VkBuffer m_staging_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_staging_buffer_memory = VK_NULL_HANDLE;
+    VkDeviceSize m_staging_buffer_size = 0;
+    VkDeviceSize m_staging_buffer_used = 0;
 
     struct TextureImpl {
         VkImage image = VK_NULL_HANDLE;
@@ -81,4 +87,15 @@ private:
     bool initializeVulkan();
     void cleanupVulkan();
     VkShaderModule createShaderModule(const std::vector<uint32_t>& spirv_code);
+    
+    // Texture and memory helpers
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    bool createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling,
+                     VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
+                     VkImage& image, VkDeviceMemory& memory);
+    void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+    void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+    bool createImageView(VkImage image, VkFormat format, VkImageView& view);
+    bool createSampler(VkSampler& sampler);
+    bool ensureStagingBuffer(VkDeviceSize size);
 };
