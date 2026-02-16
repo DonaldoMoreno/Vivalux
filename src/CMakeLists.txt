@@ -5,6 +5,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(nativefiledialog-extended CONFIG REQUIRED)
 
 # Try to find Vulkan SDK (optional for macOS)
 find_package(Vulkan QUIET)
@@ -52,6 +53,7 @@ target_link_libraries(VivaLux PRIVATE
   glm::glm
   nlohmann_json::nlohmann_json
   PkgConfig::FFMPEG
+  nativefiledialog-extended::nfd
 )
 
 # macOS-specific frameworks for FFmpeg

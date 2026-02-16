@@ -11,6 +11,7 @@
     "stb",
     "fmt",
     "vulkan-headers",
-    "volk"
+    "volk",
+    "nativefiledialog-extended"
   ]
 }

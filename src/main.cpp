@@ -36,6 +36,8 @@ extern "C" {
 #include "rendering/Renderer.h"
 #include "rendering/RendererFactory.h"
 
+#include <nfd.h>
+
 // Phase 5: Video decoder using FFmpeg
 class VideoDecoder {
 public:
@@ -545,6 +547,34 @@ struct ShowModeController {
         draw_list->AddText(pos, help_color, "H: Toggle OSD | O: Toggle All Layers");
     }
 };
+
+// ============================================================================
+// File Dialog Helpers
+// ============================================================================
+
+std::string open_file_dialog(const char* filter_ext = nullptr) {
+    nfdchar_t* out_path = nullptr;
+    nfdresult_t result = NFD_OpenDialog(&out_path, nullptr, nullptr);
+    
+    if (result == NFD_OKAY) {
+        std::string path(out_path);
+        free(out_path);
+        return path;
+    }
+    return "";
+}
+
+std::string save_file_dialog(const char* filter_ext = "json", const char* default_name = "") {
+    nfdchar_t* out_path = nullptr;
+    nfdresult_t result = NFD_SaveDialog(&out_path, nullptr, default_name);
+    
+    if (result == NFD_OKAY) {
+        std::string path(out_path);
+        free(out_path);
+        return path;
+    }
+    return "";
+}
 
 int main(int argc, char** argv)
 {
@@ -1086,7 +1116,15 @@ int main(int argc, char** argv)
             ImGui::Separator();
             ImGui::Text("Save/Load Project File:");
 
-            ImGui::InputText("Save Path##scene", scene_save_path, sizeof(scene_save_path));
+            // Save Path with native file dialog
+            if (ImGui::Button("Choose Save Location...##save", ImVec2(-1, 0))) {
+                std::string selected = save_file_dialog("json", "project.json");
+                if (!selected.empty()) {
+                    strncpy(scene_save_path, selected.c_str(), sizeof(scene_save_path) - 1);
+                    scene_save_path[sizeof(scene_save_path) - 1] = '\0';
+                }
+            }
+            ImGui::TextWrapped("Save Path: %s", scene_save_path[0] ? scene_save_path : "(None selected)");
             ImGui::SameLine();
             if (ImGui::Button("Save to JSON")) {
                 std::string path(scene_save_path);
@@ -1107,7 +1145,17 @@ int main(int argc, char** argv)
                 }
             }
 
-            ImGui::InputText("Load Path##scene", scene_load_path, sizeof(scene_load_path));
+            ImGui::Separator();
+
+            // Load Path with native file dialog
+            if (ImGui::Button("Choose File to Load...##load", ImVec2(-1, 0))) {
+                std::string selected = open_file_dialog();
+                if (!selected.empty()) {
+                    strncpy(scene_load_path, selected.c_str(), sizeof(scene_load_path) - 1);
+                    scene_load_path[sizeof(scene_load_path) - 1] = '\0';
+                }
+            }
+            ImGui::TextWrapped("Load Path: %s", scene_load_path[0] ? scene_load_path : "(None selected)");
             ImGui::SameLine();
             if (ImGui::Button("Load from JSON")) {
                 std::string path(scene_load_path);
