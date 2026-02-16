@@ -18,6 +18,7 @@ set(RENDERING_SOURCES
   rendering/RendererFactory.cpp
   rendering/RendererOpenGL.cpp
   rendering/RendererVulkan.cpp
+  rendering/ShaderCompiler.cpp
 )
 
 add_executable(VivaLux

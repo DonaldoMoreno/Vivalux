@@ -76,12 +76,33 @@ private:
         VkShaderModule fs = VK_NULL_HANDLE;
         VkPipelineLayout layout = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
+        VkDescriptorSetLayout desc_set_layout = VK_NULL_HANDLE;
+    };
+
+    struct Vertex {
+        glm::vec2 pos;
+        glm::vec2 uv;
     };
 
     std::unordered_map<TextureHandle, TextureImpl> m_textures;
     std::unordered_map<ShaderHandle, ShaderImpl> m_shaders;
     TextureHandle m_next_texture_id = 1;
     ShaderHandle m_next_shader_id = 1;
+
+    // Quad mesh (vertex and index buffers)
+    VkBuffer m_quad_vertex_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_quad_vertex_buffer_memory = VK_NULL_HANDLE;
+    VkBuffer m_quad_index_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory m_quad_index_buffer_memory = VK_NULL_HANDLE;
+    uint32_t m_quad_index_count = 0;
+
+    // Descriptor pool for texture samplers
+    VkDescriptorPool m_descriptor_pool = VK_NULL_HANDLE;
+
+    // Current state (track bound shader and texture for drawQuad)
+    ShaderHandle m_current_shader = 0;
+    TextureHandle m_current_texture = 0;
+    VkDescriptorSet m_current_descriptor_set = VK_NULL_HANDLE;
 
     // Inicialización privada
     bool initializeVulkan();
@@ -98,4 +119,15 @@ private:
     bool createImageView(VkImage image, VkFormat format, VkImageView& view);
     bool createSampler(VkSampler& sampler);
     bool ensureStagingBuffer(VkDeviceSize size);
+
+    // Buffer helpers
+    bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, 
+                     VkMemoryPropertyFlags properties, VkBuffer& buffer,
+                     VkDeviceMemory& memory);
+    void copyBuffer(VkBuffer src, VkBuffer dst, VkDeviceSize size);
+    
+    // Pipeline helpers
+    bool createQuadMesh();
+    bool createDescriptorPool();
+    bool createGraphicsPipeline(ShaderHandle handle, const ShaderImpl& shader);
 };
