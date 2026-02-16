@@ -1,0 +1,23 @@
+# Build outputs
+build/
+out/
+bin/
+lib/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# vcpkg
+vcpkg/
+vcpkg_installed/
+.vcpkg/

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "output": {
+    "monitor": 0,
+    "resolution": "1920x1080"
+  },
+  "surfaces": [
+    {
+      "id": "surface_1",
+      "type": "quad",
+      "points": [[0,0],[1,0],[1,1],[0,1]]
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer_1",
+      "source": "examples/sample.mp4",
+      "opacity": 1.0,
+      "blend": "normal",
+      "transform": {"scale":1.0, "rotation":0}
+    }
+  ],
+  "scenes": [
+    {
+      "id": "scene_1",
+      "layers": ["layer_1"],
+      "duration": 0,
+      "transition": "cut"
+    }
+  ]
+}
