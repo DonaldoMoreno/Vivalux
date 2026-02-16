@@ -9,10 +9,6 @@
 #include <cstring>
 #include <GLFW/glfw3.h>
 
-#ifdef __APPLE__
-    #define VK_USE_PLATFORM_METAL_KHR
-#endif
-
 RendererVulkan::RendererVulkan() = default;
 
 RendererVulkan::~RendererVulkan() {
@@ -49,6 +45,12 @@ bool RendererVulkan::initialize(uint32_t width, uint32_t height, void* nativeWin
 }
 
 bool RendererVulkan::initializeVulkan() {
+    // Initialize volk - dynamic Vulkan loader
+    if (volkInitialize() != VK_SUCCESS) {
+        std::cerr << "Failed to initialize volk" << std::endl;
+        return false;
+    }
+
     // Create Vulkan instance
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;

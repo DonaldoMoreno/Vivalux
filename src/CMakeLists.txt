@@ -18,6 +18,9 @@ endif()
 
 # Try to find Vulkan SDK (optional for macOS)
 find_package(Vulkan QUIET)
+find_package(vulkan-loader QUIET)
+find_package(moltenvk QUIET)
+find_package(volk QUIET)
 
 # Find FFmpeg using pkg-config
 find_package(PkgConfig REQUIRED)
@@ -52,6 +55,11 @@ if(NFD_INCLUDE_DIR)
   target_include_directories(VivaLux PRIVATE ${NFD_INCLUDE_DIR})
 endif()
 
+# macOS-specific Cocoa framework for nativefiledialog-extended
+if(APPLE)
+  target_link_libraries(VivaLux PRIVATE "-framework Cocoa")
+endif()
+
 # Platform-specific compilation flags
 if(APPLE)
   # macOS: Use Vulkan + MoltenVK
@@ -75,7 +83,7 @@ if(DBUS_FOUND)
   target_link_libraries(VivaLux PRIVATE PkgConfig::DBUS)
 endif()
 
-# macOS-specific frameworks for FFmpeg
+# macOS-specific frameworks for FFmpeg and nativefiledialog
 if(APPLE)
   target_link_libraries(VivaLux PRIVATE
     "-framework VideoToolbox"
@@ -85,6 +93,8 @@ if(APPLE)
     "-framework CoreServices"
     "-framework AVFoundation"
     "-framework IOSurface"
+    "-framework UniformTypeIdentifiers"
+    "-framework AppKit"
   )
 endif()
 
@@ -94,5 +104,24 @@ if(Vulkan_FOUND)
   if (DEFINED Vulkan_INCLUDE_DIRS)
     target_include_directories(VivaLux PRIVATE ${Vulkan_INCLUDE_DIRS})
   endif()
+endif()
+
+# Vulkan Loader support (volk - dynamic loader from vcpkg)
+if(volk_FOUND)
+  target_link_libraries(VivaLux PRIVATE volk::volk)
+  target_include_directories(VivaLux PRIVATE ${volk_INCLUDE_DIRS})
+endif()
+
+# Vulkan Loader support (from vcpkg)
+if(vulkan-loader_FOUND)
+  target_link_libraries(VivaLux PRIVATE vulkan-loader::vulkan-loader)
+endif()
+
+# MoltenVK support on macOS (from vcpkg)
+if(APPLE AND moltenvk_FOUND)
+  target_link_libraries(VivaLux PRIVATE moltenvk::moltenvk)
+elseif(APPLE AND NOT moltenvk_FOUND)
+  # Fallback: try framework linking
+  target_link_libraries(VivaLux PRIVATE "-framework MoltenVK")
 endif()
 
