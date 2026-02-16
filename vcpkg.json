@@ -11,9 +11,13 @@
     "stb",
     "fmt",
     "vulkan-headers",
-    "vulkan-loader",
     "volk",
-    "moltenvk",
     "nativefiledialog-extended"
+  ],
+  "overrides": [
+    {
+      "name": "moltenvk",
+      "version": "1.2.8"
+    }
   ]
 }
