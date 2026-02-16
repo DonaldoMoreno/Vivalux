@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <cstring>
 
 // Abstracción de backend gráfico (OpenGL / Vulkan)
 
@@ -30,9 +31,16 @@ struct TextureSpec {
 };
 
 struct Quad {
-    glm::vec2 corners[4]; // TL, TR, BR, BL en coordenadas de pantalla normalizado [0, 1]
+    char name[64] = {};  // Quad name for UI display
+    glm::vec2 corners[4]; // TL, TR, BR, BL en coordenadas de pantalla [0, 1]
     float u_min = 0.0f, u_max = 1.0f;
     float v_min = 0.0f, v_max = 1.0f;
+    
+    Quad() = default;
+    Quad(const std::string& n) : u_min(0.0f), u_max(1.0f), v_min(0.0f), v_max(1.0f) {
+        strncpy(name, n.c_str(), sizeof(name) - 1);
+        name[sizeof(name) - 1] = '\0';
+    }
 };
 
 // Handle opaco para recursos gráficos
