@@ -688,13 +688,69 @@ int main(int argc, char** argv)
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        // Top-level main menu and panel visibility toggles
+        static bool show_output = true;
+        static bool show_surface = true;
+        static bool show_media = true;
+        static bool show_layers = true;
+        static bool show_scene = true;
+        static bool show_showmode = true;
+
+        if (ImGui::Begin("Main Window", nullptr, ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoCollapse)) {
+            if (ImGui::BeginMenuBar()) {
+                if (ImGui::BeginMenu("File")) {
+                    if (ImGui::MenuItem("Quit")) glfwSetWindowShouldClose(window, GLFW_TRUE);
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("View")) {
+                    ImGui::MenuItem("Output / Display", NULL, &show_output);
+                    ImGui::MenuItem("Surface Mapping", NULL, &show_surface);
+                    ImGui::MenuItem("Media Library", NULL, &show_media);
+                    ImGui::MenuItem("Layers", NULL, &show_layers);
+                    ImGui::MenuItem("Scene Management", NULL, &show_scene);
+                    ImGui::MenuItem("Show Mode", NULL, &show_showmode);
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMenuBar();
+            }
+
+            // Two-pane layout: left sidebar (sections), right content (active section)
+            static int active_section = 0;  // 0=Output, 1=Surface, 2=Media, 3=Layers, 4=Scene, 5=ShowMode
+            static bool col_initialized = false;
+
+            ImGui::Columns(2, "MainLayout", true);
+            if (!col_initialized) {
+                ImGui::SetColumnWidth(0, 180.0f);  // Left sidebar width
+                col_initialized = true;
+            }
+
+            // --- LEFT SIDEBAR: Section selection ---
+            {
+                ImGui::BeginChild("Sidebar", ImVec2(0, 0), ImGuiChildFlags_Border);
+                ImGui::Text("Sections:");
+                ImGui::Separator();
+
+                if (show_output && ImGui::Selectable("Output / Display", active_section == 0)) active_section = 0;
+                if (show_surface && ImGui::Selectable("Surface Mapping", active_section == 1)) active_section = 1;
+                if (show_media && ImGui::Selectable("Media Library", active_section == 2)) active_section = 2;
+                if (show_layers && ImGui::Selectable("Layers", active_section == 3)) active_section = 3;
+                if (show_scene && ImGui::Selectable("Scene Management", active_section == 4)) active_section = 4;
+                if (show_showmode && !show_mode && ImGui::Selectable("Show Mode", active_section == 5)) active_section = 5;
+
+                ImGui::EndChild();
+            }
+
+            ImGui::NextColumn();
+
+            // --- RIGHT PANE: Content for active section ---
+            {
+                ImGui::BeginChild("Content", ImVec2(0, 0), ImGuiChildFlags_Border);
+
         if (!show_mode && show_demo)
             ImGui::ShowDemoWindow(&show_demo);
 
         // --- Phase 2 UI: Monitor enumeration & fullscreen control ---
-        {
-            ImGui::Begin("Output / Display");
-
+        if (active_section == 0) {
             ImGui::Text("Detected monitors: %d", (int)monitors.size());
 
             // Create a combo listing monitors
@@ -757,14 +813,10 @@ int main(int argc, char** argv)
                     is_fullscreen = false;
                 }
             }
-
-            ImGui::End();
         }
 
         // --- Phase 3 UI: Quad mapping control ---
-        {
-            ImGui::Begin("Surface Mapping");
-
+        if (active_section == 1) {
             ImGui::Text("Quads: %d", (int)quads.size());
 
             if (ImGui::Button("Add New Quad")) {
@@ -819,54 +871,10 @@ int main(int argc, char** argv)
                     }
                 }
             }
-
-            ImGui::End();
-        }
-
-        // --- Render quads on canvas using ImGui draw list ---
-        {
-            ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
-            ImU32 quad_color = ImGui::GetColorU32(ImVec4(0.0f, 1.0f, 0.0f, 0.8f));
-            ImU32 selected_color = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 0.0f, 0.8f));
-            ImU32 corner_color = ImGui::GetColorU32(ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
-
-            for (int i = 0; i < (int)quads.size(); ++i) {
-                const Quad& q = quads[i];
-                ImU32 color = (i == selected_quad_idx) ? selected_color : quad_color;
-
-                // Draw quad outline - convert glm::vec2 to ImVec2 for ImGui drawing
-                for (int j = 0; j < 4; ++j) {
-                    int next = (j + 1) % 4;
-                    draw_list->AddLine(ImVec2(q.corners[j].x, q.corners[j].y), 
-                                      ImVec2(q.corners[next].x, q.corners[next].y), color, 2.0f);
-                }
-
-                // Draw corner points
-                for (int j = 0; j < 4; ++j) {
-                    draw_list->AddCircleFilled(ImVec2(q.corners[j].x, q.corners[j].y), 4.0f, corner_color);
-                }
-            }
-
-            // Draw placement helper
-            if (is_placing_quad && selected_quad_idx >= 0 && selected_quad_idx < (int)quads.size()) {
-                const Quad& q = quads[selected_quad_idx];
-                ImU32 help_color = ImGui::GetColorU32(ImVec4(1.0f, 0.0f, 0.0f, 0.5f));
-                
-                // Highlight the corner being placed
-                draw_list->AddCircleFilled(ImVec2(q.corners[quad_placement_corner].x, q.corners[quad_placement_corner].y), 6.0f, help_color);
-                
-                // Draw a crosshair at mouse position
-                ImVec2 mouse = ImGui::GetMousePos();
-                draw_list->AddLine(ImVec2(mouse.x - 10, mouse.y), ImVec2(mouse.x + 10, mouse.y), help_color, 1.0f);
-                draw_list->AddLine(ImVec2(mouse.x, mouse.y - 10), ImVec2(mouse.x, mouse.y + 10), help_color, 1.0f);
-            }
         }
 
         // --- Phase 4 UI: Media Library (Images/Videos) ---
-        {
-            ImGui::Begin("Media Library");
-
-            ImGui::Text("Loaded Textures: %d | Video: %s", (int)media_library.textures.size(), 
+        if (active_section == 2) {            ImGui::Text("Loaded Textures: %d | Video: %s", (int)media_library.textures.size(), 
                        media_library.is_video_loaded ? "YES" : "NO");
 
             ImGui::InputText("File Path##media", file_input_buffer, sizeof(file_input_buffer));
@@ -972,7 +980,7 @@ int main(int argc, char** argv)
                 }
             }
 
-            ImGui::End();
+            }
         }
 
         // --- Phase 5: Update video playback ---
@@ -981,9 +989,7 @@ int main(int argc, char** argv)
         }
 
         // --- Phase 6 UI: Layer Composition ---
-        {
-            ImGui::Begin("Layers");
-
+        if (active_section == 3) {
             ImGui::Text("Total Layers: %d", (int)compositor.layers.size());
 
             if (ImGui::Button("Add Layer")) {
@@ -1069,13 +1075,10 @@ int main(int argc, char** argv)
                     compositor.move_layer_down(compositor.selected_layer_idx);
                 }
             }
-
-            ImGui::End();
         }
 
         // --- Phase 7 UI: Scene Management (Save/Load) ---
-        {
-            ImGui::Begin("Scene Management");
+        if (active_section == 4) {
 
             ImGui::InputText("Scene Name##scene", current_scene.name, sizeof(current_scene.name));
             ImGui::InputTextMultiline("Description##scene", current_scene.description, sizeof(current_scene.description), ImVec2(-1, 50));
@@ -1135,13 +1138,10 @@ int main(int argc, char** argv)
             ImGui::Text("Quads: %d", (int)quads.size());
             ImGui::Text("Layers: %d", (int)compositor.layers.size());
             ImGui::Text("Name: %s", current_scene.name);
-
-            ImGui::End();
         }
 
         // --- Phase 8 UI: Show Mode Control ---
-        if (!show_mode) {
-            ImGui::Begin("Show Mode");
+        if (!show_mode && show_showmode && active_section == 5) {
 
             if (ImGui::Button("Enter Show Mode (Ctrl+Shift+P)", ImVec2(-1, 30))) {
                 show_mode = true;
@@ -1152,9 +1152,14 @@ int main(int argc, char** argv)
             ImGui::Text("Quads to render: %d", (int)quads.size());
             ImGui::Text("Visible layers: %d", (int)compositor.layers.size());
             ImGui::TextDisabled("Press Ctrl+Shift+P to toggle");
-
-            ImGui::End();
         }
+
+                ImGui::EndChild();  // End content pane
+            }
+            ImGui::Columns(1);  // Reset to single column
+
+            // End main window
+            ImGui::End();
 
         // Rendering
         int display_w, display_h;
