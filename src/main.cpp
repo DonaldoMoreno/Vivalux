@@ -544,7 +544,7 @@ struct ShowModeController {
         ImU32 help_color = ImGui::GetColorU32(ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
         draw_list->AddText(pos, help_color, "SPACE: Play/Pause | Arrows: Seek/Adjust | +/-: Brightness | ESC: Exit");
         pos.y += 18;
-        draw_list->AddText(pos, help_color, "H: Toggle OSD | O: Toggle All Layers");
+        draw_list->AddText(pos, help_color, "H: Toggle OSD | O: Toggle All Layers | R: Restart Animation");
     }
 };
 
@@ -1295,6 +1295,16 @@ int main(int argc, char** argv)
                 show_mode = true;
             }
 
+            if (ImGui::Button("Restart Animation (R in Show Mode)", ImVec2(-1, 0))) {
+                // Reset animation state
+                if (media_library.is_video_loaded) {
+                    media_library.video_decoder.seek_to_frame(0);
+                    is_playing = false;
+                    std::cout << "Animation restarted\n";
+                }
+                playback_time = 0.0f;
+            }
+
             ImGui::Separator();
             ImGui::Text("Show Mode Info:");
             ImGui::Text("Quads to render: %d", (int)quads.size());
@@ -1390,6 +1400,19 @@ int main(int argc, char** argv)
                 }
             }
             o_pressed_last = o_pressed;
+            
+            // R: Restart animation
+            static bool r_pressed_last = false;
+            bool r_pressed = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
+            if (r_pressed && !r_pressed_last) {
+                if (media_library.is_video_loaded) {
+                    media_library.video_decoder.seek_to_frame(0);
+                    is_playing = false;
+                    std::cout << "Animation restarted\n";
+                }
+                playback_time = 0.0f;
+            }
+            r_pressed_last = r_pressed;
             
             // Phase 8: Render composition to quads using unified Renderer
             // Note: Renderer handles blend mode internally, no need for glEnable/glBlendFunc
