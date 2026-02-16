@@ -9,7 +9,7 @@ public:
     RendererOpenGL();
     ~RendererOpenGL() override;
 
-    bool initialize(uint32_t width, uint32_t height) override;
+    bool initialize(uint32_t width, uint32_t height, void* nativeWindow = nullptr) override;
     void shutdown() override;
 
     TextureHandle createTexture(const TextureSpec& spec) override;

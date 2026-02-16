@@ -47,7 +47,8 @@ public:
     virtual ~Renderer() = default;
 
     // Inicialización
-    virtual bool initialize(uint32_t width, uint32_t height) = 0;
+    // If `nativeWindow` is a `GLFWwindow*` it will be used to create surfaces (Vulkan).
+    virtual bool initialize(uint32_t width, uint32_t height, void* nativeWindow = nullptr) = 0;
     virtual void shutdown() = 0;
 
     // Texturas

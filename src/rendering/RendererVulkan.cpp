@@ -17,13 +17,135 @@ RendererVulkan::~RendererVulkan() {
     shutdown();
 }
 
-bool RendererVulkan::initialize(uint32_t width, uint32_t height) {
+bool RendererVulkan::initialize(uint32_t width, uint32_t height, void* nativeWindow) {
     m_width = width;
     m_height = height;
     
     if (!initializeVulkan()) {
         std::cerr << "Failed to initialize Vulkan" << std::endl;
         return false;
+    }
+
+    // If a native window (GLFWwindow*) is provided, create a surface and swapchain
+    if (nativeWindow) {
+        GLFWwindow* window = reinterpret_cast<GLFWwindow*>(nativeWindow);
+        if (!window) return true; // nothing to do
+
+        VkResult res = glfwCreateWindowSurface(m_instance, window, nullptr, &m_surface);
+        if (res != VK_SUCCESS) {
+            std::cerr << "Failed to create window surface: " << res << std::endl;
+            return false;
+        }
+
+        // Query surface capabilities and formats
+        VkSurfaceCapabilitiesKHR capabilities;
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physical_device, m_surface, &capabilities);
+
+        uint32_t formatCount = 0;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(m_physical_device, m_surface, &formatCount, nullptr);
+        if (formatCount == 0) {
+            std::cerr << "No surface formats available" << std::endl;
+            return false;
+        }
+        std::vector<VkSurfaceFormatKHR> formats(formatCount);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(m_physical_device, m_surface, &formatCount, formats.data());
+
+        VkSurfaceFormatKHR surfaceFormat = formats[0];
+        for (const auto& f : formats) {
+            if (f.format == VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                surfaceFormat = f; break;
+            }
+        }
+
+        uint32_t presentModeCount = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(m_physical_device, m_surface, &presentModeCount, nullptr);
+        std::vector<VkPresentModeKHR> presentModes(presentModeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(m_physical_device, m_surface, &presentModeCount, presentModes.data());
+
+        VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR; // guaranteed
+        for (const auto& pm : presentModes) {
+            if (pm == VK_PRESENT_MODE_MAILBOX_KHR) { presentMode = pm; break; }
+            if (pm == VK_PRESENT_MODE_IMMEDIATE_KHR) { presentMode = pm; }
+        }
+
+        VkExtent2D extent = capabilities.currentExtent;
+        if (extent.width == UINT32_MAX) {
+            extent.width = m_width;
+            extent.height = m_height;
+        }
+
+        uint32_t imageCount = capabilities.minImageCount + 1;
+        if (capabilities.maxImageCount > 0 && imageCount > capabilities.maxImageCount) {
+            imageCount = capabilities.maxImageCount;
+        }
+
+        VkSwapchainCreateInfoKHR swapchainInfo{};
+        swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        swapchainInfo.surface = m_surface;
+        swapchainInfo.minImageCount = imageCount;
+        swapchainInfo.imageFormat = surfaceFormat.format;
+        swapchainInfo.imageColorSpace = surfaceFormat.colorSpace;
+        swapchainInfo.imageExtent = extent;
+        swapchainInfo.imageArrayLayers = 1;
+        swapchainInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+        vk::QueueFamilyIndices indices = vk::findQueueFamilies(m_physical_device, m_surface);
+        uint32_t queueFamilyIndices[] = { indices.graphics, indices.present };
+        if (indices.graphics != indices.present) {
+            swapchainInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            swapchainInfo.queueFamilyIndexCount = 2;
+            swapchainInfo.pQueueFamilyIndices = queueFamilyIndices;
+        } else {
+            swapchainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            swapchainInfo.queueFamilyIndexCount = 0;
+            swapchainInfo.pQueueFamilyIndices = nullptr;
+        }
+
+        swapchainInfo.preTransform = capabilities.currentTransform;
+        swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        swapchainInfo.presentMode = presentMode;
+        swapchainInfo.clipped = VK_TRUE;
+        swapchainInfo.oldSwapchain = VK_NULL_HANDLE;
+
+        VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+        res = vkCreateSwapchainKHR(m_device, &swapchainInfo, nullptr, &swapchain);
+        if (res != VK_SUCCESS) {
+            std::cerr << "Failed to create swapchain: " << res << std::endl;
+            return false;
+        }
+        m_swapchain = swapchain;
+
+        // Retrieve swapchain images
+        uint32_t scImageCount = 0;
+        vkGetSwapchainImagesKHR(m_device, m_swapchain, &scImageCount, nullptr);
+        m_swapchain_images.resize(scImageCount);
+        vkGetSwapchainImagesKHR(m_device, m_swapchain, &scImageCount, m_swapchain_images.data());
+
+        // Create image views
+        m_swapchain_image_views.resize(scImageCount);
+        for (uint32_t i = 0; i < scImageCount; ++i) {
+            VkImageViewCreateInfo ivInfo{};
+            ivInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            ivInfo.image = m_swapchain_images[i];
+            ivInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            ivInfo.format = surfaceFormat.format;
+            ivInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            ivInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            ivInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            ivInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+            ivInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            ivInfo.subresourceRange.baseMipLevel = 0;
+            ivInfo.subresourceRange.levelCount = 1;
+            ivInfo.subresourceRange.baseArrayLayer = 0;
+            ivInfo.subresourceRange.layerCount = 1;
+
+            VkImageView iv = VK_NULL_HANDLE;
+            if (vkCreateImageView(m_device, &ivInfo, nullptr, &iv) != VK_SUCCESS) {
+                std::cerr << "Failed to create image view" << std::endl;
+                return false;
+            }
+            m_swapchain_image_views[i] = iv;
+        }
     }
 
     return true;
@@ -209,7 +331,16 @@ void RendererVulkan::deleteTexture(TextureHandle handle) {
 
 VkShaderModule RendererVulkan::createShaderModule(const std::vector<uint32_t>& spirv_code) {
     // TODO: Crear VkShaderModule desde código SPIR-V
-    return VK_NULL_HANDLE;
+    VkShaderModuleCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = spirv_code.size() * sizeof(uint32_t);
+    createInfo.pCode = spirv_code.data();
+
+    VkShaderModule module = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(m_device, &createInfo, nullptr, &module) != VK_SUCCESS) {
+        return VK_NULL_HANDLE;
+    }
+    return module;
 }
 
 ShaderHandle RendererVulkan::createShader(const std::string& vs_code, const std::string& fs_code) {

@@ -9,7 +9,7 @@ RendererOpenGL::~RendererOpenGL() {
     shutdown();
 }
 
-bool RendererOpenGL::initialize(uint32_t width, uint32_t height) {
+bool RendererOpenGL::initialize(uint32_t width, uint32_t height, void* nativeWindow) {
     m_width = width;
     m_height = height;
 
