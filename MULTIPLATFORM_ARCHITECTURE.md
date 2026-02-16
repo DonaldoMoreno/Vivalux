@@ -104,10 +104,28 @@ std::unique_ptr<Renderer> createPlatformRenderer() {
 
 ### Windows/Linux (OpenGL)
 
+**Configuración inicial:**
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ./build/src/VivaLux
+```
+
+**Rebuild (limpiar y compilar nuevamente):**
+```bash
+# Opción 1: Limpiar y compilar
+cmake --build build --target clean
+cmake --build build
+
+# Opción 2: Eliminar directorio build y reconfigurar
+rm -rf build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+**Solo limpiar:**
+```bash
+cmake --build build --target clean
 ```
 
 ### macOS M1 (Vulkan + MoltenVK)
@@ -119,13 +137,69 @@ brew install vulkan-headers
 bundle install
 ```
 
-**Compilación:**
+**Configuración inicial:**
 ```bash
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build
 ./build/src/VivaLux
+```
+
+**Rebuild (limpiar y compilar nuevamente):**
+```bash
+# Opción 1: Limpiar y compilar
+cmake --build build --target clean
+cmake --build build
+
+# Opción 2: Eliminar directorio build y reconfigurar
+rm -rf build
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build build
+```
+
+**Solo limpiar:**
+```bash
+cmake --build build --target clean
+```
+
+### Windows (OpenGL con Visual Studio)
+
+**Configuración inicial:**
+```bash
+# PowerShell
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+.\build\src\Release\VivaLux.exe
+```
+
+**Rebuild (limpiar y compilar nuevamente):**
+```bash
+# Opción 1: Limpiar con CMake
+cmake --build build --target clean
+cmake --build build --config Release
+
+# Opción 2: Eliminar directorio build y reconfigurar
+Remove-Item -Recurse -Force build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+```
+
+**Con vcpkg (recomendado):**
+```bash
+# Reconfiguración completa
+Remove-Item -Recurse -Force build
+cmake -S . -B build `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_TOOLCHAIN_FILE=.\vcpkg\scripts\buildsystems\vcpkg.cmake
+cmake --build build --config Release
+```
+
+**Solo limpiar:**
+```bash
+cmake --build build --target clean
 ```
 
 ## Dependencias
