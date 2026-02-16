@@ -642,6 +642,10 @@ int main(int argc, char** argv)
     bool is_placing_quad = false;
     int quad_placement_corner = 0;  // which corner we're placing (0-3)
     float snap_distance = 10.0f;    // pixels
+    
+    // Drag & drop vertex editing
+    int dragging_quad_idx = -1;      // which quad is being dragged (-1 if none)
+    int dragging_corner_idx = -1;    // which corner is being dragged (0-3, -1 if none)
 
     // Phase 4: media/texture management
     MediaLibrary media_library;
@@ -712,6 +716,39 @@ int main(int argc, char** argv)
                     }
                 }
             }
+        }
+
+        // Drag & drop vertex editing (only if not over ImGui and not in show mode)
+        if (!show_mode && selected_quad_idx >= 0 && selected_quad_idx < (int)quads.size() && !ImGui::GetIO().WantCaptureMouse) {
+            ImVec2 imgui_mouse_pos = ImGui::GetMousePos();
+            glm::vec2 mouse_pos(imgui_mouse_pos.x, imgui_mouse_pos.y);
+            const Quad& quad = quads[selected_quad_idx];
+            
+            // Check if mouse is over a corner
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                for (int i = 0; i < 4; ++i) {
+                    float dist = glm::distance(mouse_pos, quad.corners[i]);
+                    if (dist < 15.0f) {  // 15-pixel hit radius
+                        dragging_quad_idx = selected_quad_idx;
+                        dragging_corner_idx = i;
+                        break;
+                    }
+                }
+            }
+            
+            // Handle dragging
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && dragging_quad_idx == selected_quad_idx && dragging_corner_idx >= 0) {
+                quads[dragging_quad_idx].corners[dragging_corner_idx] = mouse_pos;
+            }
+            
+            // Stop dragging
+            if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                dragging_quad_idx = -1;
+                dragging_corner_idx = -1;
+            }
+        } else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            dragging_quad_idx = -1;
+            dragging_corner_idx = -1;
         }
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -880,6 +917,7 @@ int main(int argc, char** argv)
 
                 ImGui::InputText("Quad Name", q.name, sizeof(q.name));
 
+                ImGui::TextDisabled("(Drag corners on canvas to edit | Or use sliders below)");
                 ImGui::Text("Corners:");
                 for (int i = 0; i < 4; ++i) {
                     float corners[2] = {q.corners[i].x, q.corners[i].y};
@@ -900,6 +938,68 @@ int main(int argc, char** argv)
                         is_placing_quad = false;
                     }
                 }
+            }
+        }
+
+        // --- Render quads on canvas using ImGui draw list (for all quads) ---
+        {
+            ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
+            ImU32 quad_color = ImGui::GetColorU32(ImVec4(0.0f, 1.0f, 0.0f, 0.8f));
+            ImU32 selected_color = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 0.0f, 0.8f));
+            ImU32 corner_color = ImGui::GetColorU32(ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
+            ImU32 dragging_color = ImGui::GetColorU32(ImVec4(1.0f, 0.0f, 1.0f, 1.0f));
+            ImU32 hovered_corner_color = ImGui::GetColorU32(ImVec4(1.0f, 1.0f, 0.0f, 1.0f));
+
+            for (int i = 0; i < (int)quads.size(); ++i) {
+                const Quad& q = quads[i];
+                ImU32 color = (i == selected_quad_idx) ? selected_color : quad_color;
+
+                // Draw quad outline
+                for (int j = 0; j < 4; ++j) {
+                    int next = (j + 1) % 4;
+                    draw_list->AddLine(ImVec2(q.corners[j].x, q.corners[j].y), 
+                                      ImVec2(q.corners[next].x, q.corners[next].y), color, 2.0f);
+                }
+
+                // Draw corner points - highlight if being dragged
+                if (i == selected_quad_idx && !show_mode) {
+                    ImVec2 mouse_pos = ImGui::GetMousePos();
+                    for (int j = 0; j < 4; ++j) {
+                        ImU32 corner_c = corner_color;
+                        float radius = 5.0f;
+                        
+                        // Check if this corner is being hovered or dragged
+                        float dist = glm::distance(glm::vec2(mouse_pos.x, mouse_pos.y), q.corners[j]);
+                        if (dragging_quad_idx == i && dragging_corner_idx == j) {
+                            corner_c = dragging_color;
+                            radius = 8.0f;
+                        } else if (dist < 15.0f) {
+                            corner_c = hovered_corner_color;
+                            radius = 6.0f;
+                        }
+                        
+                        draw_list->AddCircleFilled(ImVec2(q.corners[j].x, q.corners[j].y), radius, corner_c);
+                    }
+                } else {
+                    // Draw smaller corner points for unselected quads
+                    for (int j = 0; j < 4; ++j) {
+                        draw_list->AddCircleFilled(ImVec2(q.corners[j].x, q.corners[j].y), 4.0f, corner_color);
+                    }
+                }
+            }
+
+            // Draw placement helper when in placement mode
+            if (is_placing_quad && selected_quad_idx >= 0 && selected_quad_idx < (int)quads.size()) {
+                const Quad& q = quads[selected_quad_idx];
+                ImU32 help_color = ImGui::GetColorU32(ImVec4(1.0f, 0.0f, 0.0f, 0.5f));
+                
+                // Highlight the corner being placed
+                draw_list->AddCircleFilled(ImVec2(q.corners[quad_placement_corner].x, q.corners[quad_placement_corner].y), 6.0f, help_color);
+                
+                // Draw a crosshair at mouse position
+                ImVec2 mouse = ImGui::GetMousePos();
+                draw_list->AddLine(ImVec2(mouse.x - 10, mouse.y), ImVec2(mouse.x + 10, mouse.y), help_color, 1.0f);
+                draw_list->AddLine(ImVec2(mouse.x, mouse.y - 10), ImVec2(mouse.x, mouse.y + 10), help_color, 1.0f);
             }
         }
 
