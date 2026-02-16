@@ -262,7 +262,7 @@ struct MediaLibrary {
             video_texture = INVALID_TEXTURE;
         }
         is_video_loaded = false;
-        video_decoder.close();
+        video_decoder.cleanup();
     }
     
     bool add_texture(const std::string& path, Renderer* r) {
@@ -560,11 +560,11 @@ struct ShowModeController {
 
 std::string open_file_dialog(const char* filter_ext = nullptr) {
     nfdchar_t* out_path = nullptr;
-    nfdresult_t result = NFD_OpenDialog(&out_path, nullptr, nullptr);
+    nfdresult_t result = NFD_OpenDialog(&out_path, nullptr, 0, nullptr);
     
     if (result == NFD_OKAY) {
         std::string path(out_path);
-        free(out_path);
+        NFD_FreePath(out_path);
         return path;
     }
     return "";
@@ -572,11 +572,11 @@ std::string open_file_dialog(const char* filter_ext = nullptr) {
 
 std::string save_file_dialog(const char* filter_ext = "json", const char* default_name = "") {
     nfdchar_t* out_path = nullptr;
-    nfdresult_t result = NFD_SaveDialog(&out_path, nullptr, default_name);
+    nfdresult_t result = NFD_SaveDialog(&out_path, nullptr, 0, nullptr, default_name);
     
     if (result == NFD_OKAY) {
         std::string path(out_path);
-        free(out_path);
+        NFD_FreePath(out_path);
         return path;
     }
     return "";
@@ -1515,4 +1515,5 @@ int main(int argc, char** argv)
     glfwTerminate();
 
     return 0;
+}
 }

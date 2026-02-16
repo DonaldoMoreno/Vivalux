@@ -5,7 +5,16 @@ find_package(imgui CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(nativefiledialog-extended CONFIG REQUIRED)
+
+# nativefiledialog-extended doesn't provide CMake config files, so we find it manually
+find_path(NFD_INCLUDE_DIR nfd.h)
+find_library(NFD_LIBRARY nfd)
+
+# Find dbus for nativefiledialog-extended on Linux
+if(NOT APPLE)
+  find_package(PkgConfig)
+  pkg_check_modules(DBUS IMPORTED_TARGET dbus-1)
+endif()
 
 # Try to find Vulkan SDK (optional for macOS)
 find_package(Vulkan QUIET)
@@ -38,6 +47,11 @@ target_include_directories(VivaLux PRIVATE
   ${Stb_INCLUDE_DIR}
 )
 
+# Add nativefiledialog-extended include directory
+if(NFD_INCLUDE_DIR)
+  target_include_directories(VivaLux PRIVATE ${NFD_INCLUDE_DIR})
+endif()
+
 # Platform-specific compilation flags
 if(APPLE)
   # macOS: Use Vulkan + MoltenVK
@@ -53,8 +67,13 @@ target_link_libraries(VivaLux PRIVATE
   glm::glm
   nlohmann_json::nlohmann_json
   PkgConfig::FFMPEG
-  nativefiledialog-extended::nfd
+  ${NFD_LIBRARY}
 )
+
+# Link dbus for nativefiledialog-extended on Linux
+if(DBUS_FOUND)
+  target_link_libraries(VivaLux PRIVATE PkgConfig::DBUS)
+endif()
 
 # macOS-specific frameworks for FFmpeg
 if(APPLE)
