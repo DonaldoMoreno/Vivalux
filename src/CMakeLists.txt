@@ -22,13 +22,18 @@ find_package(volk QUIET)
 
 # macOS: Find MoltenVK (installed via Homebrew, not vcpkg)
 if(APPLE)
-  find_package(MoltenVK QUIET CONFIG)
-  if(NOT MoltenVK_FOUND)
-    # Try to find it manually via pkg-config or system paths
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-      pkg_check_modules(MoltenVK QUIET MoltenVK)
-    endif()
+  # Try to find MoltenVK from Homebrew installation
+  set(MOLTENVK_HOMEBREW_PATH "/opt/homebrew/opt/molten-vk")
+  
+  # Check if Homebrew MoltenVK exists
+  if(EXISTS ${MOLTENVK_HOMEBREW_PATH})
+    set(MoltenVK_FOUND TRUE)
+    set(MoltenVK_INCLUDE_DIRS "${MOLTENVK_HOMEBREW_PATH}/include")
+    find_library(MoltenVK_LIBRARIES NAMES MoltenVK PATHS "${MOLTENVK_HOMEBREW_PATH}/lib" NO_DEFAULT_PATH)
+    message(STATUS "Found MoltenVK from Homebrew at ${MOLTENVK_HOMEBREW_PATH}")
+  else()
+    # Fallback: try system find_package
+    find_package(MoltenVK QUIET CONFIG)
   endif()
 endif()
 
@@ -128,13 +133,15 @@ endif()
 # MoltenVK support on macOS (installed via Homebrew, not vcpkg)
 # MoltenVK translates Vulkan API calls to Metal on macOS
 if(APPLE)
-  if(MoltenVK_FOUND)
+  if(MoltenVK_FOUND AND MoltenVK_LIBRARIES)
     target_link_libraries(VivaLux PRIVATE ${MoltenVK_LIBRARIES})
-    target_include_directories(VivaLux PRIVATE ${MoltenVK_INCLUDE_DIRS})
-    message(STATUS "Using system MoltenVK for Vulkan on macOS")
+    if(MoltenVK_INCLUDE_DIRS)
+      target_include_directories(VivaLux PRIVATE ${MoltenVK_INCLUDE_DIRS})
+    endif()
+    message(STATUS "Successfully linked MoltenVK to VivaLux")
   else()
     # Fallback: try framework linking
-    message(STATUS "MoltenVK not found in pkg-config, attempting framework linking")
+    message(WARNING "MoltenVK library not found, attempting framework linking")
     target_link_libraries(VivaLux PRIVATE "-framework MoltenVK")
   endif()
 endif()
