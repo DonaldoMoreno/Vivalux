@@ -19,7 +19,18 @@ endif()
 # Try to find Vulkan SDK (optional for macOS)
 find_package(Vulkan QUIET)
 find_package(volk QUIET)
-find_package(moltenvk QUIET CONFIG)
+
+# macOS: Find MoltenVK (installed via Homebrew, not vcpkg)
+if(APPLE)
+  find_package(MoltenVK QUIET CONFIG)
+  if(NOT MoltenVK_FOUND)
+    # Try to find it manually via pkg-config or system paths
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(MoltenVK QUIET MoltenVK)
+    endif()
+  endif()
+endif()
 
 # Find FFmpeg using pkg-config
 find_package(PkgConfig REQUIRED)
@@ -114,14 +125,17 @@ if(volk_FOUND)
   endif()
 endif()
 
-# MoltenVK support on macOS (from vcpkg)
+# MoltenVK support on macOS (installed via Homebrew, not vcpkg)
 # MoltenVK translates Vulkan API calls to Metal on macOS
-if(APPLE AND moltenvk_FOUND)
-  target_link_libraries(VivaLux PRIVATE moltenvk::moltenvk)
-  message(STATUS "Using MoltenVK for Vulkan on macOS")
-elseif(APPLE)
-  # Fallback: try framework linking if CMake package not found
-  message(STATUS "MoltenVK package not found, attempting framework linking")
-  target_link_libraries(VivaLux PRIVATE "-framework MoltenVK")
+if(APPLE)
+  if(MoltenVK_FOUND)
+    target_link_libraries(VivaLux PRIVATE ${MoltenVK_LIBRARIES})
+    target_include_directories(VivaLux PRIVATE ${MoltenVK_INCLUDE_DIRS})
+    message(STATUS "Using system MoltenVK for Vulkan on macOS")
+  else()
+    # Fallback: try framework linking
+    message(STATUS "MoltenVK not found in pkg-config, attempting framework linking")
+    target_link_libraries(VivaLux PRIVATE "-framework MoltenVK")
+  endif()
 endif()
 

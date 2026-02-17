@@ -12,7 +12,6 @@
     "fmt",
     "vulkan-headers",
     "volk",
-    "moltenvk",
     "nativefiledialog-extended"
   ]
 }
